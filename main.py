@@ -10,8 +10,17 @@ import adafruit_requests as requests
 
 from secrets import secrets
 
+def clear():
+    for r in range(21):
+        print("")
+
+clear()
+print("Connecting to wifi")
+
 wifi = adafruit_pyportal.wifi.WiFi(status_neopixel=board.NEOPIXEL)
 wifi.connect(secrets["wifi"]["ssid"], secrets["wifi"]["password"])
+
+print("Starting up")
 
 url = "https://" + secrets["api"]["host"] + "/v1/objects/services?filter=service.state!=0&attrs=state&attrs=last_hard_state_change"
 headers = {
@@ -26,7 +35,7 @@ while True:
     if cached != response.text:
         cached = response.text
 
-        print("-" * 40)
+        clear()
 
         if response.status_code == 200:
             data = json.loads(cached)
@@ -44,8 +53,6 @@ while True:
         else:
             print("ERROR: ", response.text)
 
-        print("-" * 40)
-
     response.close()
 
-    time.sleep(5)
+    time.sleep(30)
