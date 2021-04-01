@@ -1,0 +1,1 @@
+Adafruit CircuitPython 6.2.0-beta.2-82-g2830984ae on 2021-02-21; Adafruit PyPortal Titano with samd51j20
