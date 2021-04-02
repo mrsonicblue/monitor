@@ -12,20 +12,31 @@ import adafruit_requests as requests
 from adafruit_bitmap_font import bitmap_font
 from adafruit_display_shapes.rect import Rect
 from adafruit_display_text.label import Label
+import render_bdf
 
 from secrets import secrets
-
-WHITE = 0xFFFFFF
-GREY = 0x888888
-BLACK = 0x000000
-BUTTON1 = 0x3D1810
-BUTTON2 = 0x7F3122
-STATES = ["OK", "WARNING", "CRITICAL", "UNKNOWN"]
-STATE_COLORS = [0x23BD7D, 0xFFA856, 0xFF4C68, 0xB33AF6]
 
 def clear():
     for r in range(21):
         print("")
+
+def render_text(grid, map, text):
+    xs = 66
+    ys = 1
+    ts = len(text)
+    i = 0
+    for y in range(ys):
+        for x in range(xs):
+            if i < ts:
+                c = ord(text[i])
+                if c in map:
+                    grid[x, y] = map[c]
+                else:
+                    grid[x, y] = 0
+            else:
+                grid[x, y] = 0
+            i += 1
+
 
 clear()
 print("Connecting to wifi")
@@ -35,43 +46,56 @@ wifi.connect(secrets["wifi"]["ssid"], secrets["wifi"]["password"])
 
 print("Starting up")
 
+BLACK = 0x000000
+DGREY = 0x888888
+LGREY = 0xAAAAAA
+WHITE = 0xFFFFFF
+STATE_COLORS = [0x23BD7D, 0xFFA856, 0xFF4C68, 0xB33AF6]
+STATE_LABELS = ["OK", "WARNING", "CRITICAL", "UNKNOWN"]
+
+palette_white = displayio.Palette(2)
+palette_white[0] = BLACK
+palette_white[1] = WHITE
+
+palette_grey = displayio.Palette(2)
+palette_grey[0] = BLACK
+palette_grey[1] = LGREY
+
+TILE_COUNT = 160
+TILE_WIDTH = 7
+TILE_HEIGHT = 13
+tiles = displayio.Bitmap(TILE_COUNT * TILE_WIDTH, TILE_HEIGHT, 2)
+
+glyphs = b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-,.:/! '
+normal_map = render_bdf.render_bdf("/fonts/ctrld-fixed-13r.bdf", glyphs, tiles, TILE_WIDTH, TILE_HEIGHT, 1)
+bold_map = render_bdf.render_bdf("/fonts/ctrld-fixed-13b.bdf", glyphs, tiles, TILE_WIDTH, TILE_HEIGHT, len(normal_map) + 1)
+
 display = board.DISPLAY
 
 root = displayio.Group(max_size=15)
 display.show(root)
-
-normal_font = terminalio.FONT
-bold_font = terminalio.FONT
-
-# normal_font = bitmap_font.load_font("/fonts/ctrld-fixed-13r.bdf")
-# normal_font.load_glyphs(b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-,.:/! ')
-
-# bold_font = bitmap_font.load_font("/fonts/ctrld-fixed-13b.bdf")
-# bold_font.load_glyphs(b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-,.:/! ')
 
 blocks = []
 BLOCK_BULLET = 0
 BLOCK_TOP = 1
 BLOCK_BOTTOM = 2
 for i in range(10):
-    y = 31 * i
-    
-    block = displayio.Group(max_size=5)
+    block = displayio.Group(max_size=5, x=0, y=31 * i)
     blocks.append(block)
 
-    bullet = Rect(0, y, 10, 26, fill=WHITE)
+    bullet = Rect(0, 0, 10, 26, fill=WHITE)
     block.append(bullet)
 
-    top_label = Label(bold_font, text="blah blah on blah", max_glyphs=50, x=14, y=y + 6, color=WHITE)
+    top_label = displayio.TileGrid(tiles, pixel_shader=palette_white, x=14, y=0, width=66, height=1, tile_width=TILE_WIDTH, tile_height=TILE_HEIGHT)
     block.append(top_label)
 
-    # bottom_label = Label(normal_font, text="01/04/2021 12:12 PM", max_glyphs=19, x=14, y=y + 18, color=GREY)
-    # block.append(bottom_label)
+    bottom_label = displayio.TileGrid(tiles, pixel_shader=palette_grey, x=14, y=13, width=66, height=1, tile_width=TILE_WIDTH, tile_height=TILE_HEIGHT)
+    block.append(bottom_label)
 
-andthen = displayio.Group(max_size=10)
+andthen = displayio.Group(max_size=10, x=0, y=307)
 root.append(andthen)
 
-andthen_label = Label(normal_font, text="", max_glyphs=25, x=0, y=314, color=WHITE)
+andthen_label = displayio.TileGrid(tiles, pixel_shader=palette_white, x=14, y=0, width=66, height=1, tile_width=TILE_WIDTH, tile_height=TILE_HEIGHT)
 andthen.append(andthen_label)
 
 url = "https://" + secrets["api"]["host"] + "/v1/objects/services?filter=service.state!=0&attrs=state&attrs=last_hard_state_change"
@@ -105,7 +129,12 @@ while True:
                     last_hard_state_change_date = datetime.datetime.fromtimestamp(last_hard_state_change)
 
                     block[BLOCK_BULLET].fill = STATE_COLORS[state]
-                    block[BLOCK_TOP].text = (name + " @ " + host)[:50]
+
+                    top_text = name + " - " + host
+                    bottom_text = STATE_LABELS[state] + " since " + last_hard_state_change_date.isoformat()
+
+                    render_text(block[BLOCK_TOP], bold_map, top_text)
+                    render_text(block[BLOCK_BOTTOM], normal_map, bottom_text)
 
                     if blocks[i] not in root:
                         root.append(blocks[i])
@@ -113,13 +142,11 @@ while True:
                     if blocks[i] in root:
                         root.remove(blocks[i])
 
-                i = i + 1
+                i += 1
             
             diff = service_count - len(blocks)
-            if diff > 0:
-                andthen_label.text = "and " + str(diff) + " more..."
-            else:
-                andthen_label.text = ""
+            diff_text = "" if (diff < 0) else "and " + str(diff) + " more..."
+            render_text(andthen_label, normal_map, diff_text)
 
             # for service in data["results"]:
             #     bits = service["name"].split("!")
@@ -136,5 +163,7 @@ while True:
             print("ERROR: ", response.text)
 
     response.close()
+
+    gc.collect()
 
     time.sleep(30)
