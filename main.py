@@ -2,12 +2,12 @@ import os
 import sys
 import gc
 import time
+import tzutil
 import board
 import displayio
 import terminalio
 import json
 import adafruit_pyportal
-import adafruit_datetime as datetime
 import adafruit_requests as requests
 from adafruit_bitmap_font import bitmap_font
 from adafruit_display_shapes.rect import Rect
@@ -20,22 +20,51 @@ def clear():
     for r in range(21):
         print("")
 
-def render_text(grid, map, text):
+def hour_to_12(h):
+    if h == 0:
+        return 12
+    if h > 12:
+        return h - 12
+    return h
+
+def hour_to_suffix(h):
+    if h < 12:
+        return "AM"
+    return "PM"
+
+def format_time(t):
+    return "{}-{:02d}-{:02d} {:02d}:{:02d}:{:02d} {}".format(
+        t.tm_year,
+        t.tm_mon,
+        t.tm_mday,
+        hour_to_12(t.tm_hour),
+        t.tm_min,
+        t.tm_sec,
+        hour_to_suffix(t.tm_hour),
+    )
+
+def render_text(grid, maps, text):
     xs = 66
     ys = 1
     ts = len(text)
     i = 0
+    map = 0
     for y in range(ys):
         for x in range(xs):
             if i < ts:
-                c = ord(text[i])
-                if c in map:
-                    grid[x, y] = map[c]
+                while True:
+                    c = ord(text[i])
+                    i += 1
+                    if c > 10:
+                        break
+                    map = c
+
+                if c in maps[map]:
+                    grid[x, y] = maps[map][c]
                 else:
                     grid[x, y] = 0
             else:
                 grid[x, y] = 0
-            i += 1
 
 
 clear()
@@ -69,6 +98,7 @@ tiles = displayio.Bitmap(TILE_COUNT * TILE_WIDTH, TILE_HEIGHT, 2)
 glyphs = b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-,.:/! '
 normal_map = render_bdf.render_bdf("/fonts/ctrld-fixed-13r.bdf", glyphs, tiles, TILE_WIDTH, TILE_HEIGHT, 1)
 bold_map = render_bdf.render_bdf("/fonts/ctrld-fixed-13b.bdf", glyphs, tiles, TILE_WIDTH, TILE_HEIGHT, len(normal_map) + 1)
+maps = [normal_map, bold_map]
 
 display = board.DISPLAY
 
@@ -98,7 +128,7 @@ root.append(andthen)
 andthen_label = displayio.TileGrid(tiles, pixel_shader=palette_white, x=14, y=0, width=66, height=1, tile_width=TILE_WIDTH, tile_height=TILE_HEIGHT)
 andthen.append(andthen_label)
 
-url = "https://" + secrets["api"]["host"] + "/v1/objects/services?filter=service.state!=0&attrs=state&attrs=last_hard_state_change"
+url = "https://" + secrets["api"]["host"] + "/v1/objects/services?filter=service.state!=0%26%26service.state_type==1&attrs=state&attrs=last_hard_state_change"
 headers = {
     "Authorization": "Basic " + secrets["api"]["credentials"]
 }
@@ -126,15 +156,18 @@ while True:
                     attrs = service["attrs"]
                     state = int(attrs["state"])
                     last_hard_state_change = int(attrs["last_hard_state_change"])
-                    last_hard_state_change_date = datetime.datetime.fromtimestamp(last_hard_state_change)
+
+                    if last_hard_state_change > 0:
+                        since = format_time(tzutil.US_Central.localtime(last_hard_state_change))
+                    else:
+                        since = "NEVER"
 
                     block[BLOCK_BULLET].fill = STATE_COLORS[state]
+                    top_text = "\1" + name + "\0 " + host
+                    bottom_text = STATE_LABELS[state] + " since " + since
 
-                    top_text = name + " - " + host
-                    bottom_text = STATE_LABELS[state] + " since " + last_hard_state_change_date.isoformat()
-
-                    render_text(block[BLOCK_TOP], bold_map, top_text)
-                    render_text(block[BLOCK_BOTTOM], normal_map, bottom_text)
+                    render_text(block[BLOCK_TOP], maps, top_text)
+                    render_text(block[BLOCK_BOTTOM], maps, bottom_text)
 
                     if blocks[i] not in root:
                         root.append(blocks[i])
@@ -145,20 +178,8 @@ while True:
                 i += 1
             
             diff = service_count - len(blocks)
-            diff_text = "" if (diff < 0) else "and " + str(diff) + " more..."
-            render_text(andthen_label, normal_map, diff_text)
-
-            # for service in data["results"]:
-            #     bits = service["name"].split("!")
-            #     host = bits[0]
-            #     name = bits[1]
-            #     attrs = service["attrs"]
-            #     state = int(attrs["state"])
-            #     last_hard_state_change = int(attrs["last_hard_state_change"])
-            #     last_hard_state_change_date = datetime.datetime.fromtimestamp(last_hard_state_change)
-
-            #     print(name, " @ ", host)
-            #     print(STATES[state], " since ", last_hard_state_change_date.isoformat())
+            diff_text = "" if (diff <= 0) else "and " + str(diff) + " more..."
+            render_text(andthen_label, maps, diff_text)
         else:
             print("ERROR: ", response.text)
 
