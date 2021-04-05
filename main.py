@@ -67,9 +67,9 @@ def render_text(grid, maps, text):
                 grid[x, y] = 0
 
 def service_key(service):
-    name = service["name"]
     attrs = service["attrs"]
     state = int(attrs["state"])
+    last_hard_state_change = int(attrs["last_hard_state_change"])
 
     # Force sort order to be: critical, known, warning, ok
     sort_key = 9
@@ -80,7 +80,7 @@ def service_key(service):
     elif state == 1: # Warning
         sort_key = 2
         
-    return str(sort_key) + "_" + name
+    return str(sort_key) + "_" + str(9999999999 - last_hard_state_change)
 
 clear()
 print("Connecting to wifi")
