@@ -66,6 +66,21 @@ def render_text(grid, maps, text):
             else:
                 grid[x, y] = 0
 
+def service_key(service):
+    name = service["name"]
+    attrs = service["attrs"]
+    state = int(attrs["state"])
+
+    # Force sort order to be: critical, known, warning, ok
+    sort_key = 9
+    if state == 2: # Critital
+        sort_key = 0
+    elif state == 3: # Unknown
+        sort_key = 1
+    elif state == 1: # Warning
+        sort_key = 2
+        
+    return str(sort_key) + "_" + name
 
 clear()
 print("Connecting to wifi")
@@ -145,6 +160,8 @@ while True:
             data = json.loads(cached)
             services = data["results"]
             service_count = len(services)
+
+            services.sort(key=service_key)
             
             i = 0
             for block in blocks:
