@@ -194,9 +194,12 @@ while True:
 
                 i += 1
             
-            diff = service_count - len(blocks)
-            diff_text = "" if (diff <= 0) else "and " + str(diff) + " more..."
-            render_text(andthen_label, maps, diff_text)
+            if service_count == 0:
+                render_text(andthen_label, maps, "Nothing to report")
+            else:
+                diff = service_count - len(blocks)
+                diff_text = "" if (diff <= 0) else "and " + str(diff) + " more..."
+                render_text(andthen_label, maps, diff_text)
         else:
             print("ERROR: ", response.text)
 
