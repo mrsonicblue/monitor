@@ -66,21 +66,34 @@ def render_text(grid, maps, text):
             else:
                 grid[x, y] = 0
 
-def service_key(service):
-    attrs = service["attrs"]
+def item_key(item):
+    attrs = item["attrs"]
     state = int(attrs["state"])
     last_hard_state_change = int(attrs["last_hard_state_change"])
+    last_hard_state_change_key = str(9999999999 - last_hard_state_change)
 
-    # Force sort order to be: critical, known, warning, ok
-    sort_key = 9
-    if state == 2: # Critital
-        sort_key = 0
-    elif state == 3: # Unknown
-        sort_key = 1
-    elif state == 1: # Warning
-        sort_key = 2
-        
-    return str(sort_key) + "_" + str(9999999999 - last_hard_state_change)
+    # Sort hosts before services
+    item_type = item["type"]
+    if item_type == "Host":
+        # Sort hosts by state: down, unreachable, up
+        state_key = 9
+        if state == 1: # Down
+            state_key = 0
+        elif state == 2: # Unreachable
+            state_key = 1
+            
+        return "0" + "_" + str(state_key) + "_" + last_hard_state_change_key
+    else:
+        # Sort services by state: critical, known, warning, ok
+        state_key = 9
+        if state == 2: # Critital
+            state_key = 0
+        elif state == 3: # Unknown
+            state_key = 1
+        elif state == 1: # Warning
+            state_key = 2
+            
+        return "1" + "_" + str(state_key) + "_" + last_hard_state_change_key
 
 clear()
 print("Connecting to wifi")
@@ -94,8 +107,10 @@ BLACK = 0x000000
 DGREY = 0x888888
 LGREY = 0xAAAAAA
 WHITE = 0xFFFFFF
-STATE_COLORS = [0x23BD7D, 0xFFA856, 0xFF4C68, 0xB33AF6]
-STATE_LABELS = ["OK", "WARNING", "CRITICAL", "UNKNOWN"]
+SERVICE_STATE_COLORS = [0x23BD7D, 0xFFA856, 0xFF4C68, 0xB33AF6]
+SERVICE_STATE_LABELS = ["OK", "WARNING", "CRITICAL", "UNKNOWN"]
+HOST_STATE_COLORS = [0x23BD7D, 0xFF4C68, 0xB33AF6]
+HOST_STATE_LABELS = ["UP", "DOWN", "UNREACHABLE"]
 
 palette_white = displayio.Palette(2)
 palette_white[0] = BLACK
@@ -143,34 +158,44 @@ root.append(andthen)
 andthen_label = displayio.TileGrid(tiles, pixel_shader=palette_white, x=14, y=0, width=66, height=1, tile_width=TILE_WIDTH, tile_height=TILE_HEIGHT)
 andthen.append(andthen_label)
 
-url = "https://" + secrets["api"]["host"] + "/v1/objects/services?filter=service.state!=0%26%26service.state_type==1&attrs=state&attrs=last_hard_state_change"
 headers = {
     "Authorization": "Basic " + secrets["api"]["credentials"]
 }
+services_url = "https://" + secrets["api"]["host"] + "/v1/objects/services?filter=service.state!=0%26%26service.state_type==1&attrs=state&attrs=last_hard_state_change"
+hosts_url = "https://" + secrets["api"]["host"] + "/v1/objects/hosts?filter=host.state!=0%26%26host.state_type==1&attrs=state&attrs=last_hard_state_change"
 
-cached = ""
+services_cached = ""
+hosts_cached = ""
 while True:
-    response = wifi.requests.get(url, headers=headers)
-    if cached != response.text:
-        cached = response.text
+    services_response = wifi.requests.get(services_url, headers=headers)
+    services_text = services_response.text
+    services_response.close()
+
+    hosts_response = wifi.requests.get(hosts_url, headers=headers)
+    hosts_text = hosts_response.text
+    hosts_response.close()
+
+    if services_cached != services_text or hosts_cached != hosts_text:
+        services_cached = services_text
+        hosts_cached = hosts_text
 
         clear()
 
-        if response.status_code == 200:
-            data = json.loads(cached)
-            services = data["results"]
-            service_count = len(services)
+        if services_response.status_code == 200 and hosts_response.status_code == 200:
+            services_data = json.loads(services_text)
+            hosts_data = json.loads(hosts_text)
+            
+            items = services_data["results"] + hosts_data["results"]
+            item_count = len(items)
 
-            services.sort(key=service_key)
+            items.sort(key=item_key)
             
             i = 0
             for block in blocks:
-                if service_count > i:
-                    service = services[i]
-                    bits = service["name"].split("!")
-                    host = bits[0]
-                    name = bits[1]
-                    attrs = service["attrs"]
+                if item_count > i:
+                    item = items[i]
+                    item_type = item["type"]                    
+                    attrs = item["attrs"]
                     state = int(attrs["state"])
                     last_hard_state_change = int(attrs["last_hard_state_change"])
 
@@ -179,9 +204,15 @@ while True:
                     else:
                         since = "NEVER"
 
-                    block[BLOCK_BULLET].fill = STATE_COLORS[state]
-                    top_text = "\1" + name + "\0 " + host
-                    bottom_text = STATE_LABELS[state] + " since " + since
+                    if item_type == "Host":
+                        block[BLOCK_BULLET].fill = HOST_STATE_COLORS[state]
+                        top_text = "\1" + item["name"]
+                        bottom_text = HOST_STATE_LABELS[state] + " since " + since
+                    else:
+                        block[BLOCK_BULLET].fill = SERVICE_STATE_COLORS[state]
+                        bits = item["name"].split("!")
+                        top_text = "\1" + bits[1] + "\0 " + bits[0]
+                        bottom_text = SERVICE_STATE_LABELS[state] + " since " + since
 
                     render_text(block[BLOCK_TOP], maps, top_text)
                     render_text(block[BLOCK_BOTTOM], maps, bottom_text)
@@ -194,16 +225,15 @@ while True:
 
                 i += 1
             
-            if service_count == 0:
+            if item_count == 0:
                 render_text(andthen_label, maps, "Nothing to report")
             else:
-                diff = service_count - len(blocks)
+                diff = item_count - len(blocks)
                 diff_text = "" if (diff <= 0) else "and " + str(diff) + " more..."
                 render_text(andthen_label, maps, diff_text)
         else:
-            print("ERROR: ", response.text)
-
-    response.close()
+            error = services_text if services_response.status_code != 200 else hosts_text
+            render_text(andthen_label, maps, "ERROR: " + error)    
 
     gc.collect()
 
